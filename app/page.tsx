@@ -5,8 +5,8 @@ import { FormEvent, useMemo, useRef, useState } from "react";
 type CalendarEvent = { id: number; title: string; startSlot: number; endSlot: number; color: number };
 type DragAction = { id: number; mode: "move" | "start" | "end"; duration: number };
 
-const COLORS = ["#ff3b30", "#ff8500", "#ffc400", "#31a24c", "#00a98f", "#00a6cf", "#2979ff", "#6847e8", "#a83bc1", "#ed3981"];
-const DEFAULT_NAMES = ["Urgent", "Build", "Planning", "Personal", "Review", "Research", "Work", "Publish", "Admin", "Ideas"];
+const COLORS = ["#ff3b30", "#ff8500", "#ffc400", "#00a98f", "#00a6cf", "#2979ff", "#6847e8", "#a83bc1", "#ed3981"];
+const DEFAULT_NAMES = ["Urgent", "Build", "Planning", "Review", "Research", "Work", "Publish", "Admin", "Ideas"];
 const WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -23,10 +23,10 @@ const baseMonth = today.getMonth();
 const seed = (day: number) => `${baseYear}-${pad(baseMonth + 1)}-${pad(day)}`;
 const INITIAL_EVENTS = [
   makeEvent(1, "Build garden wall", seed(4), seed(6), 0),
-  makeEvent(2, "Electrical rough-in", seed(10), seed(12), 6),
+  makeEvent(2, "Electrical rough-in", seed(10), seed(12), 5),
   makeEvent(3, "Order timber", seed(8), seed(8), 2),
-  makeEvent(4, "Kitchen install", seed(17), seed(21), 4),
-  makeEvent(5, "Client walkthrough", seed(25), seed(25), 7),
+  makeEvent(4, "Kitchen install", seed(17), seed(21), 3),
+  makeEvent(5, "Client walkthrough", seed(25), seed(25), 6),
 ];
 
 export default function Home() {
@@ -62,7 +62,7 @@ export default function Home() {
     wheelLock.current = time;
     shift(event.deltaY > 0 ? 1 : -1);
   };
-  const openNew = (date = iso(new Date(view.year, view.month, view.half ? 15 : 1))) => setEditing({ id: Date.now(), title: "", startSlot: slot(date), endSlot: slot(date, 2), color: 6 });
+  const openNew = (date = iso(new Date(view.year, view.month, view.half ? 15 : 1))) => setEditing({ id: Date.now(), title: "", startSlot: slot(date), endSlot: slot(date, 2), color: 5 });
   const save = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!editing?.title.trim()) return;
