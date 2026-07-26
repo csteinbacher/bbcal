@@ -31,7 +31,7 @@ button { color:inherit; }
 .date-label button:hover { background:#edf0ec; }.date-label button.is-today { background:#000; color:white; font-weight:800; }
 .event-stack { height:100%; display:flex; flex-direction:column; gap:3px; overflow-y:auto; overflow-x:hidden; scrollbar-width:thin; padding-bottom:3px; }
 .event-lane { position:relative; height:19px; min-height:19px; }
-.event { --event-color:#2979ff; position:absolute; top:0; bottom:0; display:flex; align-items:center; min-width:8px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; border:0; background:var(--event-color); color:white; padding:2px 8px; font-size:10px; font-weight:800; cursor:grab; box-shadow:inset 0 -1px 0 rgba(0,0,0,.15); }
+.event { --event-color:#2979ff; position:absolute; top:0; bottom:0; display:flex; align-items:center; min-width:8px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; border:0; background:var(--event-color); color:#fff; padding:2px 8px; font-size:10px; font-weight:800; cursor:grab; box-shadow:inset 0 -1px 0 rgba(0,0,0,.15); text-shadow:-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000; }
 .event:hover { filter:brightness(1.08); z-index:2; }.event:active { cursor:grabbing; }
 .event-start { border-radius:5px 0 0 5px; }.event-end { border-radius:0 5px 5px 0; }
 .event-start.event-end { border-radius:5px; }
