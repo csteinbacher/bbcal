@@ -7,6 +7,7 @@ type CalendarEvent = { id: number; title: string; startSlot: number; endSlot: nu
 type DragAction = { id: number; mode: "move" | "start" | "end"; duration: number };
 type CategoryRow = { id: number; name: string; color: string; sort_order: number };
 type EventRow = { id: number; title: string; start_slot: number; end_slot: number; category_id: number };
+type ViewerRole = "chris" | "viewer";
 
 const DEFAULT_COLORS = ["#ff3b30", "#ff8500", "#ffc400", "#00a98f", "#00a6cf", "#2979ff", "#6847e8", "#a83bc1", "#ed3981"];
 const DEFAULT_NAMES = ["Urgent", "Build", "Planning", "Review", "Research", "Work", "Publish", "Admin", "Ideas"];
@@ -14,7 +15,6 @@ const WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const pad = (n: number) => String(n).padStart(2, "0");
 const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const parseDate = (value: string) => { const [year, month, day] = value.split("-").map(Number); return new Date(year, month - 1, day); };
 const dayIndex = (value: string) => { const [year, month, day] = value.split("-").map(Number); return Math.floor(Date.UTC(year, month - 1, day) / 86400000); };
 const slot = (value: string, half = 0) => dayIndex(value) * 2 + half;
 const slotDate = (value: number) => { const d = new Date(Math.floor(value / 2) * 86400000); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
@@ -33,7 +33,23 @@ export default function Home() {
   const [dragAction, setDragAction] = useState<DragAction | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncError, setSyncError] = useState("");
+  const [role, setRole] = useState<ViewerRole | null>(null);
+  const [identityChecked, setIdentityChecked] = useState(false);
+  const [choosingChris, setChoosingChris] = useState(false);
+  const [password, setPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
   const wheelLock = useRef(0);
+
+  const canEdit = role === "chris";
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const savedRole = window.localStorage.getItem("bbcal-role");
+      if (savedRole === "chris" || savedRole === "viewer") setRole(savedRole);
+      setIdentityChecked(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -84,10 +100,13 @@ export default function Home() {
     wheelLock.current = time;
     shift(event.deltaY > 0 ? 1 : -1);
   };
-  const openNew = (date = iso(new Date(view.year, view.month, view.half ? 15 : 1))) => setEditing({ id: Date.now(), title: "", startSlot: slot(date), endSlot: slot(date, 2), color: 5 });
+  const openNew = (date = iso(new Date(view.year, view.month, view.half ? 15 : 1))) => {
+    if (!canEdit) return;
+    setEditing({ id: Date.now(), title: "", startSlot: slot(date), endSlot: slot(date, 2), color: 5 });
+  };
   const save = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!editing?.title.trim()) return;
+    if (!canEdit || !editing?.title.trim()) return;
     const fixed = { ...editing, title: editing.title.trim(), endSlot: Math.max(editing.startSlot + 1, editing.endSlot) };
     const exists = events.some(item => item.id === fixed.id);
     const values = { title: fixed.title, start_slot: fixed.startSlot, end_slot: fixed.endSlot, category_id: fixed.color };
@@ -100,19 +119,20 @@ export default function Home() {
     setSyncError(""); setEditing(null);
   };
   const remove = async () => {
-    if (!editing) return;
+    if (!canEdit || !editing) return;
     const result = await supabase.from("events").delete().eq("id", editing.id);
     if (result.error) { setSyncError(result.error.message); return; }
     setEvents(current => current.filter(item => item.id !== editing.id)); setSyncError(""); setEditing(null);
   };
   const beginDrag = (event: React.DragEvent, item: CalendarEvent, mode: DragAction["mode"]) => {
+    if (!canEdit) return;
     event.stopPropagation();
     setDragAction({ id: item.id, mode, duration: item.endSlot - item.startSlot });
     event.dataTransfer.effectAllowed = "move";
   };
   const dropAt = async (event: React.DragEvent, date: string) => {
     event.preventDefault();
-    if (!dragAction) return;
+    if (!canEdit || !dragAction) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const targetSlot = slot(date, event.clientX - rect.left >= rect.width / 2 ? 1 : 0);
     const original = events.find(item => item.id === dragAction.id);
@@ -129,12 +149,30 @@ export default function Home() {
       setSyncError(result.error.message);
     } else setSyncError("");
   };
-  const renameColor = (index: number, name: string) => setColorNames(current => current.map((value, i) => i === index ? name : value));
+  const renameColor = (index: number, name: string) => {
+    if (canEdit) setColorNames(current => current.map((value, i) => i === index ? name : value));
+  };
   const persistColorName = async (index: number) => {
+    if (!canEdit) return;
     const name = colorNames[index].trim();
     if (!name) { setColorNames(current => current.map((value, i) => i === index ? DEFAULT_NAMES[index] : value)); return; }
     const result = await supabase.from("categories").update({ name }).eq("id", index);
     if (result.error) setSyncError(result.error.message); else setSyncError("");
+  };
+
+  const chooseViewer = () => {
+    window.localStorage.setItem("bbcal-role", "viewer");
+    setRole("viewer");
+  };
+  const unlockChris = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (password !== "bbcal") { setPasswordError("That password is not correct."); return; }
+    window.localStorage.setItem("bbcal-role", "chris");
+    setRole("chris"); setPassword(""); setPasswordError("");
+  };
+  const forgetIdentity = () => {
+    window.localStorage.removeItem("bbcal-role");
+    setRole(null); setChoosingChris(false); setPassword(""); setPasswordError("");
   };
 
   return (
@@ -149,7 +187,7 @@ export default function Home() {
           </select>
           <button className="icon-button" onClick={() => shift(1)} aria-label="Next half month">›</button>
         </div>
-        <div className="actions"><span className={`sync-status ${syncError ? "sync-error" : ""}`} title={syncError || "Connected to Supabase"}>{loading ? "Loading…" : syncError ? "Sync error" : "● Saved"}</span><button className="today-button" onClick={jumpToday}>Today</button><button className="add-button" onClick={() => openNew()}>＋ Add event</button></div>
+        <div className="actions"><button className="role-button" onClick={forgetIdentity} title="Change viewer">{canEdit ? "Chris" : "View only"}</button><span className={`sync-status ${syncError ? "sync-error" : ""}`} title={syncError || "Connected to Supabase"}>{loading ? "Loading…" : syncError ? "Sync error" : "● Saved"}</span><button className="today-button" onClick={jumpToday}>Today</button>{canEdit && <button className="add-button" onClick={() => openNew()}>＋ Add event</button>}</div>
       </header>
 
       <section className="calendar" aria-label={`${view.title} calendar`}>
@@ -160,17 +198,17 @@ export default function Home() {
             const dateIso = iso(date); const dayStart = slot(dateIso); const dayEnd = dayStart + 2;
             const dayEvents = events.filter(item => item.startSlot < dayEnd && item.endSlot > dayStart).sort((a, b) => a.startSlot - b.startSlot || a.id - b.id);
             const isToday = dateIso === iso(today);
-            return <div className="day" data-date={dateIso} key={dateIso} onDoubleClick={e => { if (e.target === e.currentTarget) openNew(dateIso); }} onDragOver={e => e.preventDefault()} onDrop={e => dropAt(e, dateIso)}>
-              <div className="date-label">{isToday && <strong>TODAY</strong>}<button className={isToday ? "is-today" : ""} onClick={() => openNew(dateIso)} aria-label={`Add event on ${dateIso}`}>{date.getDate()}</button></div>
+            return <div className="day" data-date={dateIso} key={dateIso} onDoubleClick={e => { if (canEdit && e.target === e.currentTarget) openNew(dateIso); }} onDragOver={e => { if (canEdit) e.preventDefault(); }} onDrop={e => dropAt(e, dateIso)}>
+              <div className="date-label">{isToday && <strong>TODAY</strong>}<button className={isToday ? "is-today" : ""} onClick={() => openNew(dateIso)} disabled={!canEdit} aria-label={canEdit ? `Add event on ${dateIso}` : dateIso}>{date.getDate()}</button></div>
               <div className="event-stack">
                 {dayEvents.map(item => {
                   const starts = item.startSlot >= dayStart; const ends = item.endSlot <= dayEnd;
                   const left = Math.max(0, item.startSlot - dayStart) * 50;
                   const right = Math.max(0, dayEnd - item.endSlot) * 50;
-                  return <div className="event-lane" key={item.id}><div draggable onDragStart={e => beginDrag(e, item, "move")} onDragEnd={() => setDragAction(null)} onDoubleClick={e => { e.stopPropagation(); setEditing({ ...item }); }} className={`event ${starts ? "event-start" : ""} ${ends ? "event-end" : ""}`} style={{ "--event-color": colors[item.color] || DEFAULT_COLORS[5], left: `${left}%`, right: `${right}%` } as React.CSSProperties} title={`${item.title} · double-click to edit`}>
-                    {starts && <span draggable className="resize-handle resize-left" onDragStart={e => beginDrag(e, item, "start")} aria-label="Resize event start" />}
+                  return <div className="event-lane" key={item.id}><div draggable={canEdit} onDragStart={e => beginDrag(e, item, "move")} onDragEnd={() => setDragAction(null)} onDoubleClick={e => { if (canEdit) { e.stopPropagation(); setEditing({ ...item }); } }} className={`event ${starts ? "event-start" : ""} ${ends ? "event-end" : ""} ${canEdit ? "" : "read-only"}`} style={{ "--event-color": colors[item.color] || DEFAULT_COLORS[5], left: `${left}%`, right: `${right}%` } as React.CSSProperties} title={canEdit ? `${item.title} · double-click to edit` : item.title}>
+                    {canEdit && starts && <span draggable className="resize-handle resize-left" onDragStart={e => beginDrag(e, item, "start")} aria-label="Resize event start" />}
                     {starts ? item.title : null}
-                    {ends && <span draggable className="resize-handle resize-right" onDragStart={e => beginDrag(e, item, "end")} aria-label="Resize event end" />}
+                    {canEdit && ends && <span draggable className="resize-handle resize-right" onDragStart={e => beginDrag(e, item, "end")} aria-label="Resize event end" />}
                   </div></div>;
                 })}
               </div>
@@ -179,7 +217,7 @@ export default function Home() {
         </div>
       </section>
 
-      <div className="legend" onWheel={e => e.stopPropagation()}>{colors.map((color, i) => <label key={i} title="Click to rename"><i style={{ background: color }} /><input value={colorNames[i]} onChange={e => renameColor(i, e.target.value)} onBlur={() => persistColorName(i)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} aria-label={`Rename ${colorNames[i]} category`} /></label>)}</div>
+      <div className="legend" onWheel={e => e.stopPropagation()}>{colors.map((color, i) => <label key={i} title={canEdit ? "Click to rename" : colorNames[i]}><i style={{ background: color }} /><input value={colorNames[i]} readOnly={!canEdit} onChange={e => renameColor(i, e.target.value)} onBlur={() => persistColorName(i)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} aria-label={`${canEdit ? "Rename" : "Category"} ${colorNames[i]}`} /></label>)}</div>
 
       {editing && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setEditing(null)} onWheel={e => e.stopPropagation()}>
         <form className="modal" onSubmit={save}>
@@ -189,6 +227,17 @@ export default function Home() {
           <fieldset><legend>Category</legend><div className="color-grid">{colors.map((color, i) => <button type="button" key={i} className={`color-dot ${editing.color === i ? "selected" : ""}`} style={{ background: color }} onClick={() => setEditing({ ...editing, color: i })} aria-label={colorNames[i]} title={colorNames[i]} />)}</div></fieldset>
           <div className="modal-actions">{events.some(item => item.id === editing.id) && <button type="button" className="delete" onClick={remove}>Delete</button>}<span /><button type="button" className="cancel" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="save">Save event</button></div>
         </form>
+      </div>}
+
+      {identityChecked && !role && <div className="modal-backdrop identity-backdrop" onWheel={e => e.stopPropagation()}>
+        {!choosingChris ? <section className="modal identity-modal" role="dialog" aria-modal="true" aria-labelledby="identity-title">
+          <p className="eyebrow">WELCOME TO BBCAL</p><h2 id="identity-title">Who are you?</h2><p className="identity-copy">Choose how you want to open the calendar.</p>
+          <div className="identity-options"><button className="identity-primary" onClick={() => setChoosingChris(true)}>Chris</button><button className="identity-secondary" onClick={chooseViewer}>Not Chris</button></div>
+        </section> : <form className="modal identity-modal" onSubmit={unlockChris}>
+          <button type="button" className="identity-back" onClick={() => { setChoosingChris(false); setPasswordError(""); }}>‹ Back</button><p className="eyebrow">CHRIS ACCESS</p><h2>Enter your password</h2>
+          <label>Password<input autoFocus type="password" value={password} onChange={e => { setPassword(e.target.value); setPasswordError(""); }} aria-invalid={Boolean(passwordError)} /></label>
+          {passwordError && <p className="password-error" role="alert">{passwordError}</p>}<button className="identity-primary identity-submit" type="submit">Open BBCal</button>
+        </form>}
       </div>}
     </main>
   );
