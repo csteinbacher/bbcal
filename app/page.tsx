@@ -11,6 +11,7 @@ type ViewerRole = "chris" | "viewer";
 
 const DEFAULT_COLORS = ["#ff3b30", "#ff8500", "#ffc400", "#00a98f", "#00a6cf", "#2979ff", "#6847e8", "#a83bc1", "#ed3981"];
 const DEFAULT_NAMES = ["Urgent", "Build", "Planning", "Review", "Research", "Work", "Publish", "Admin", "Ideas"];
+const PRIVATE_PREFIX = "__BBCAL_PRIVATE__:";
 const WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -29,6 +30,7 @@ export default function Home() {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [colors, setColors] = useState(DEFAULT_COLORS);
   const [colorNames, setColorNames] = useState(DEFAULT_NAMES);
+  const [publicCategories, setPublicCategories] = useState(() => DEFAULT_NAMES.map(() => true));
   const [editing, setEditing] = useState<CalendarEvent | null>(null);
   const [dragAction, setDragAction] = useState<DragAction | null>(null);
   const [loading, setLoading] = useState(true);
@@ -65,8 +67,15 @@ export default function Home() {
         const categories = (categoriesResult.data || []) as CategoryRow[];
         if (categories.length) {
           const nextColors = [...DEFAULT_COLORS]; const nextNames = [...DEFAULT_NAMES];
-          categories.forEach(category => { nextColors[category.id] = category.color; nextNames[category.id] = category.name; });
+          const nextPublic = DEFAULT_NAMES.map(() => true);
+          categories.forEach(category => {
+            nextColors[category.id] = category.color;
+            const isPublic = !category.name.startsWith(PRIVATE_PREFIX);
+            nextPublic[category.id] = isPublic;
+            nextNames[category.id] = isPublic ? category.name : category.name.slice(PRIVATE_PREFIX.length);
+          });
           setColors(nextColors); setColorNames(nextNames);
+          setPublicCategories(nextPublic);
         }
         setEvents(((eventsResult.data || []) as EventRow[]).map(toEvent));
       }
@@ -156,8 +165,22 @@ export default function Home() {
     if (!canEdit) return;
     const name = colorNames[index].trim();
     if (!name) { setColorNames(current => current.map((value, i) => i === index ? DEFAULT_NAMES[index] : value)); return; }
-    const result = await supabase.from("categories").update({ name }).eq("id", index);
+    const storedName = publicCategories[index] ? name : `${PRIVATE_PREFIX}${name}`;
+    const result = await supabase.from("categories").update({ name: storedName }).eq("id", index);
     if (result.error) setSyncError(result.error.message); else setSyncError("");
+  };
+
+  const setCategoryVisibility = async (index: number, isPublic: boolean) => {
+    if (!canEdit || publicCategories[index] === isPublic) return;
+    const previous = publicCategories[index];
+    setPublicCategories(current => current.map((value, i) => i === index ? isPublic : value));
+    const cleanName = colorNames[index].trim() || DEFAULT_NAMES[index];
+    const storedName = isPublic ? cleanName : `${PRIVATE_PREFIX}${cleanName}`;
+    const result = await supabase.from("categories").update({ name: storedName }).eq("id", index);
+    if (result.error) {
+      setPublicCategories(current => current.map((value, i) => i === index ? previous : value));
+      setSyncError(result.error.message);
+    } else setSyncError("");
   };
 
   const chooseViewer = () => {
@@ -176,7 +199,7 @@ export default function Home() {
   };
 
   return (
-    <main className="calendar-shell" onWheel={handleWheel}>
+    <main className={`calendar-shell ${canEdit ? "can-edit" : ""}`} onWheel={handleWheel}>
       <header className="topbar">
         <div className="brand"><span className="brand-mark">BB</span><span>BBCal</span></div>
         <div className="month-nav">
@@ -205,7 +228,7 @@ export default function Home() {
                   const starts = item.startSlot >= dayStart; const ends = item.endSlot <= dayEnd;
                   const left = Math.max(0, item.startSlot - dayStart) * 50;
                   const right = Math.max(0, dayEnd - item.endSlot) * 50;
-                  return <div className="event-lane" key={item.id}><div draggable={canEdit} onDragStart={e => beginDrag(e, item, "move")} onDragEnd={() => setDragAction(null)} onDoubleClick={e => { if (canEdit) { e.stopPropagation(); setEditing({ ...item }); } }} className={`event ${starts ? "event-start" : ""} ${ends ? "event-end" : ""} ${canEdit ? "" : "read-only"}`} style={{ "--event-color": colors[item.color] || DEFAULT_COLORS[5], left: `${left}%`, right: `${right}%` } as React.CSSProperties} title={canEdit ? `${item.title} · double-click to edit` : item.title}>
+                  return <div className={`event-lane ${!canEdit && !publicCategories[item.color] ? "private-category" : ""}`} key={item.id}><div draggable={canEdit} onDragStart={e => beginDrag(e, item, "move")} onDragEnd={() => setDragAction(null)} onDoubleClick={e => { if (canEdit) { e.stopPropagation(); setEditing({ ...item }); } }} className={`event ${starts ? "event-start" : ""} ${ends ? "event-end" : ""} ${canEdit ? "" : "read-only"}`} style={{ "--event-color": colors[item.color] || DEFAULT_COLORS[5], left: `${left}%`, right: `${right}%` } as React.CSSProperties} title={canEdit ? `${item.title} · double-click to edit` : item.title}>
                     {canEdit && starts && <span draggable className="resize-handle resize-left" onDragStart={e => beginDrag(e, item, "start")} aria-label="Resize event start" />}
                     {starts ? item.title : null}
                     {canEdit && ends && <span draggable className="resize-handle resize-right" onDragStart={e => beginDrag(e, item, "end")} aria-label="Resize event end" />}
@@ -217,7 +240,14 @@ export default function Home() {
         </div>
       </section>
 
-      <div className="legend" onWheel={e => e.stopPropagation()}>{colors.map((color, i) => <label key={i} title={canEdit ? "Click to rename" : colorNames[i]}><i style={{ background: color }} /><input value={colorNames[i]} readOnly={!canEdit} onChange={e => renameColor(i, e.target.value)} onBlur={() => persistColorName(i)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} aria-label={`${canEdit ? "Rename" : "Category"} ${colorNames[i]}`} /></label>)}</div>
+      <footer className="category-footer" onWheel={e => e.stopPropagation()}>
+        <div className="legend">{colors.map((color, i) => <label className={!canEdit && !publicCategories[i] ? "private-category" : ""} key={i} title={canEdit ? "Click to rename" : colorNames[i]}><i style={{ background: color }} /><input value={colorNames[i]} readOnly={!canEdit} onChange={e => renameColor(i, e.target.value)} onBlur={() => persistColorName(i)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} aria-label={`${canEdit ? "Rename" : "Category"} ${colorNames[i]}`} /></label>)}</div>
+        {canEdit && <div className="visibility-manager" aria-label="Category visibility settings">
+          <div className="visibility-bucket"><strong>Everyone can see</strong><div>{colors.map((color, i) => publicCategories[i] && <button key={i} onClick={() => setCategoryVisibility(i, false)} title="Make Chris only"><i style={{ background: color }} />{colorNames[i]}<span>→</span></button>)}</div></div>
+          <div className="visibility-divider" aria-hidden="true" />
+          <div className="visibility-bucket private-bucket"><strong>Chris only</strong><div>{colors.map((color, i) => !publicCategories[i] && <button key={i} onClick={() => setCategoryVisibility(i, true)} title="Make visible to everyone"><span>←</span><i style={{ background: color }} />{colorNames[i]}</button>)}</div></div>
+        </div>}
+      </footer>
 
       {editing && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setEditing(null)} onWheel={e => e.stopPropagation()}>
         <form className="modal" onSubmit={save}>
