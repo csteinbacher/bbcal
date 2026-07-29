@@ -14,6 +14,7 @@ type TodoItem = { id: string; list_id: string; title: string; is_completed: bool
 type TodoLink = { id: number; todoListId: string; todoShareCode: string; startSlot: number; endSlot: number };
 type TodoLinkRow = { id: number; todo_list_id: string; todo_share_code: string; start_slot: number; end_slot: number };
 type TodoDraft = { todoListId: string; startDate: string; endDate: string };
+type CreationMode = "event" | "todo";
 type ViewerRole = "chris" | "viewer";
 
 const DEFAULT_COLORS = ["#ff3b30", "#ff8500", "#ffc400", "#00a98f", "#00a6cf", "#2979ff", "#6847e8", "#a83bc1", "#ed3981"];
@@ -51,6 +52,7 @@ export default function Home() {
   const [todoLists, setTodoLists] = useState<TodoList[]>([]);
   const [todoLinks, setTodoLinks] = useState<TodoLink[]>([]);
   const [todoDraft, setTodoDraft] = useState<TodoDraft | null>(null);
+  const [creationMode, setCreationMode] = useState<CreationMode>("event");
   const [openTodoLink, setOpenTodoLink] = useState<TodoLink | null>(null);
   const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
   const [todoLoading, setTodoLoading] = useState(false);
@@ -158,6 +160,8 @@ export default function Home() {
   };
   const openNew = (date = iso(new Date(view.year, view.month, view.half ? 15 : 1))) => {
     if (!canEdit) return;
+    setCreationMode("event");
+    setTodoDraft({ todoListId: todoLists[0]?.id || "", startDate: date, endDate: date });
     setEditing({ id: Date.now(), title: "", startSlot: slot(date), endSlot: slot(date, 2), color: 5 });
   };
   const save = async (event: FormEvent<HTMLFormElement>) => {
@@ -230,12 +234,6 @@ export default function Home() {
     } else setSyncError("");
   };
 
-  const openTodoPicker = (date = iso(new Date(view.year, view.month, view.half ? 15 : 1))) => {
-    if (!canEdit) return;
-    setTodoError("");
-    setTodoDraft({ todoListId: todoLists[0]?.id || "", startDate: date, endDate: date });
-  };
-
   const attachTodoList = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!canEdit || !todoDraft?.todoListId) return;
@@ -252,7 +250,7 @@ export default function Home() {
     }).select("id,todo_list_id,todo_share_code,start_slot,end_slot").single();
     if (result.error) { setTodoError(result.error.message); return; }
     setTodoLinks(current => [...current, toTodoLink(result.data as TodoLinkRow)]);
-    setTodoDraft(null); setTodoError("");
+    setTodoDraft(null); setEditing(null); setTodoError("");
   };
 
   const showTodoList = async (link: TodoLink) => {
@@ -302,6 +300,10 @@ export default function Home() {
     setTodoLists([]); setTodoLinks([]); setTodoItems([]); setOpenTodoLink(null); setTodoDraft(null); setTodoError("");
   };
 
+  const closeCreation = () => { setEditing(null); setTodoDraft(null); setTodoError(""); };
+  const editingExistingEvent = Boolean(editing && events.some(item => item.id === editing.id));
+  const creatingTodo = Boolean(editing && !editingExistingEvent && creationMode === "todo");
+
   return (
     <main className={`calendar-shell ${canEdit ? "can-edit" : ""}`} onWheel={handleWheel}>
       <header className="topbar">
@@ -314,7 +316,7 @@ export default function Home() {
           </select>
           <button className="icon-button" onClick={() => shift(1)} aria-label="Next half month">›</button>
         </div>
-        <div className="actions"><button className="role-button" onClick={forgetIdentity} title="Change viewer">{canEdit ? "Chris" : "View only"}</button><span className={`sync-status ${syncError || todoError ? "sync-error" : ""}`} title={syncError || todoError || "Connected to Supabase"}>{loading ? "Loading…" : syncError || todoError ? "Sync error" : "● Saved"}</span><button className="today-button" onClick={jumpToday}>Today</button>{canEdit && <button className="todo-button" onClick={() => openTodoPicker()}>＋ Todo list</button>}{canEdit && <button className="add-button" onClick={() => openNew()}>＋ Add event</button>}</div>
+        <div className="actions"><button className="role-button" onClick={forgetIdentity} title="Change viewer">{canEdit ? "Chris" : "View only"}</button><span className={`sync-status ${syncError || todoError ? "sync-error" : ""}`} title={syncError || todoError || "Connected to Supabase"}>{loading ? "Loading…" : syncError || todoError ? "Sync error" : "● Saved"}</span><button className="today-button" onClick={jumpToday}>Today</button>{canEdit && <button className="add-button" onClick={() => openNew()}>＋ Add event</button>}</div>
       </header>
 
       <section className="calendar" aria-label={`${view.title} calendar`}>
@@ -371,23 +373,24 @@ export default function Home() {
         </div>}
       </footer>
 
-      {editing && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setEditing(null)} onWheel={e => e.stopPropagation()}>
-        <form className="modal" onSubmit={save}>
-          <div className="modal-heading"><div><p>EVENT DETAILS</p><h2>{events.some(item => item.id === editing.id) ? "Edit event" : "New event"}</h2></div><button type="button" className="close" onClick={() => setEditing(null)} aria-label="Close">×</button></div>
-          <label>Event name<input autoFocus required value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} placeholder="e.g. Build wall" /></label>
-          <div className="date-fields"><label>Starts<input type="date" required value={slotDate(editing.startSlot)} onChange={e => setEditing({ ...editing, startSlot: slot(e.target.value) })} /></label><label>Ends<input type="date" required min={slotDate(editing.startSlot)} value={slotDate(editing.endSlot - 1)} onChange={e => setEditing({ ...editing, endSlot: slot(e.target.value, 2) })} /></label></div>
-          <fieldset><legend>Category</legend><div className="color-grid">{colors.map((color, i) => <button type="button" key={i} className={`color-dot ${editing.color === i ? "selected" : ""}`} style={{ background: color }} onClick={() => setEditing({ ...editing, color: i })} aria-label={colorNames[i]} title={colorNames[i]} />)}</div></fieldset>
-          <div className="modal-actions">{events.some(item => item.id === editing.id) && <button type="button" className="delete" onClick={remove}>Delete</button>}<span /><button type="button" className="cancel" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="save">Save event</button></div>
-        </form>
-      </div>}
-
-      {canEdit && todoDraft && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setTodoDraft(null)} onWheel={e => e.stopPropagation()}>
-        <form className="modal todo-picker-modal" onSubmit={attachTodoList}>
-          <div className="modal-heading"><div><p>PRIVATE · CHRIS ONLY</p><h2>Attach a todo list</h2></div><button type="button" className="close" onClick={() => setTodoDraft(null)} aria-label="Close">×</button></div>
-          <label>Todo list<select required autoFocus value={todoDraft.todoListId} onChange={e => setTodoDraft({ ...todoDraft, todoListId: e.target.value })}><option value="" disabled>{todoLists.length ? "Choose a list" : "No todo lists available"}</option>{todoLists.map(list => <option value={list.id} key={list.id}>{list.name}</option>)}</select></label>
-          <div className="date-fields"><label>Starts<input type="date" required value={todoDraft.startDate} onChange={e => setTodoDraft({ ...todoDraft, startDate: e.target.value, endDate: e.target.value > todoDraft.endDate ? e.target.value : todoDraft.endDate })} /></label><label>Ends<input type="date" required min={todoDraft.startDate} value={todoDraft.endDate} onChange={e => setTodoDraft({ ...todoDraft, endDate: e.target.value })} /></label></div>
-          {todoError && <p className="todo-error" role="alert">{todoError}</p>}
-          <div className="modal-actions"><span /><button type="button" className="cancel" onClick={() => setTodoDraft(null)}>Cancel</button><button type="submit" className="save" disabled={!todoDraft.todoListId}>Attach list</button></div>
+      {editing && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && closeCreation()} onWheel={e => e.stopPropagation()}>
+        <form className="modal creation-modal" onSubmit={creatingTodo ? attachTodoList : save}>
+          <div className="modal-heading"><div><p>{creatingTodo ? "PRIVATE · CHRIS ONLY" : "EVENT DETAILS"}</p><h2>{editingExistingEvent ? "Edit event" : creatingTodo ? "Attach a todo list" : "New event"}</h2></div><button type="button" className="close" onClick={closeCreation} aria-label="Close">×</button></div>
+          {!editingExistingEvent && <div className="creation-mode" role="group" aria-label="What would you like to add?">
+            <button type="button" className={creationMode === "event" ? "selected" : ""} onClick={() => setCreationMode("event")}><span aria-hidden="true">●</span> Event</button>
+            <button type="button" className={creationMode === "todo" ? "selected" : ""} onClick={() => setCreationMode("todo")}><span aria-hidden="true">✓</span> Todo list</button>
+          </div>}
+          {creatingTodo && todoDraft ? <>
+            <label>Todo list<select required autoFocus value={todoDraft.todoListId} onChange={e => setTodoDraft({ ...todoDraft, todoListId: e.target.value })}><option value="" disabled>{todoLists.length ? "Choose a list" : "No todo lists available"}</option>{todoLists.map(list => <option value={list.id} key={list.id}>{list.name}</option>)}</select></label>
+            <div className="date-fields"><label>Starts<input type="date" required value={todoDraft.startDate} onChange={e => setTodoDraft({ ...todoDraft, startDate: e.target.value, endDate: e.target.value > todoDraft.endDate ? e.target.value : todoDraft.endDate })} /></label><label>Ends<input type="date" required min={todoDraft.startDate} value={todoDraft.endDate} onChange={e => setTodoDraft({ ...todoDraft, endDate: e.target.value })} /></label></div>
+            <p className="private-note">This list will only appear in your Chris view.</p>
+            {todoError && <p className="todo-error" role="alert">{todoError}</p>}
+          </> : <>
+            <label>Event name<input autoFocus required value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} placeholder="e.g. Build wall" /></label>
+            <div className="date-fields"><label>Starts<input type="date" required value={slotDate(editing.startSlot)} onChange={e => setEditing({ ...editing, startSlot: slot(e.target.value) })} /></label><label>Ends<input type="date" required min={slotDate(editing.startSlot)} value={slotDate(editing.endSlot - 1)} onChange={e => setEditing({ ...editing, endSlot: slot(e.target.value, 2) })} /></label></div>
+            <fieldset><legend>Category</legend><div className="color-grid">{colors.map((color, i) => <button type="button" key={i} className={`color-dot ${editing.color === i ? "selected" : ""}`} style={{ background: color }} onClick={() => setEditing({ ...editing, color: i })} aria-label={colorNames[i]} title={colorNames[i]} />)}</div></fieldset>
+          </>}
+          <div className="modal-actions">{editingExistingEvent && <button type="button" className="delete" onClick={remove}>Delete</button>}<span /><button type="button" className="cancel" onClick={closeCreation}>Cancel</button><button type="submit" className="save" disabled={creatingTodo && !todoDraft?.todoListId}>{creatingTodo ? "Attach list" : "Save event"}</button></div>
         </form>
       </div>}
 
