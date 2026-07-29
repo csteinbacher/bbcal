@@ -76,6 +76,7 @@ export default function Home() {
   useEffect(() => {
     if (!canEdit) return;
     let active = true;
+    let retryTimer: number | undefined;
     const loadTodos = async () => {
       const [listsResult, linksResult] = await Promise.all([
         todoSupabase.from("todo_lists").select("id,share_code,name,position").order("position"),
@@ -83,7 +84,9 @@ export default function Home() {
       ]);
       if (!active) return;
       if (listsResult.error || linksResult.error) {
-        setTodoError(listsResult.error?.message || linksResult.error?.message || "Could not load todo lists.");
+        const source = listsResult.error ? "Todo database" : "Calendar todo links";
+        setTodoError(`${source}: ${listsResult.error?.message || linksResult.error?.message || "Could not load todo lists."}`);
+        retryTimer = window.setTimeout(loadTodos, 3000);
         return;
       }
       setTodoLists((listsResult.data || []) as TodoList[]);
@@ -91,7 +94,7 @@ export default function Home() {
       setTodoError("");
     };
     loadTodos();
-    return () => { active = false; };
+    return () => { active = false; if (retryTimer) window.clearTimeout(retryTimer); };
   }, [canEdit]);
 
   useEffect(() => {
@@ -103,7 +106,7 @@ export default function Home() {
       ]);
       if (!active) return;
       if (categoriesResult.error || eventsResult.error) {
-        setSyncError(categoriesResult.error?.message || eventsResult.error?.message || "Could not load calendar data.");
+        setSyncError(`Calendar database: ${categoriesResult.error?.message || eventsResult.error?.message || "Could not load calendar data."}`);
       } else {
         const categories = (categoriesResult.data || []) as CategoryRow[];
         if (categories.length) {
