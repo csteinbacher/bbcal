@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { assignEventLanes } from "./event-lanes";
 import { supabase } from "./supabase";
 
 type CalendarEvent = { id: number; title: string; startSlot: number; endSlot: number; color: number };
@@ -43,6 +44,11 @@ export default function Home() {
   const wheelLock = useRef(0);
 
   const canEdit = role === "chris";
+  const visibleEvents = useMemo(
+    () => events.filter(item => canEdit || publicCategories[item.color]),
+    [canEdit, events, publicCategories],
+  );
+  const eventLanes = useMemo(() => assignEventLanes(visibleEvents), [visibleEvents]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -219,12 +225,18 @@ export default function Home() {
           {view.cells.map((date, cellIndex) => {
             if (!date) return <div className="day empty" key={`empty-${cellIndex}`} />;
             const dateIso = iso(date); const dayStart = slot(dateIso); const dayEnd = dayStart + 2;
-            const dayEvents = events.filter(item => item.startSlot < dayEnd && item.endSlot > dayStart).sort((a, b) => a.startSlot - b.startSlot || a.id - b.id);
+            const dayEvents = visibleEvents
+              .filter(item => item.startSlot < dayEnd && item.endSlot > dayStart)
+              .sort((a, b) => (eventLanes.get(a.id) ?? 0) - (eventLanes.get(b.id) ?? 0));
+            const laneEvents = new Map(dayEvents.map(item => [eventLanes.get(item.id) ?? 0, item]));
+            const laneCount = dayEvents.length ? Math.max(...laneEvents.keys()) + 1 : 0;
             const isToday = dateIso === iso(today);
             return <div className="day" data-date={dateIso} key={dateIso} onDoubleClick={e => { if (canEdit && e.target === e.currentTarget) openNew(dateIso); }} onDragOver={e => { if (canEdit) e.preventDefault(); }} onDrop={e => dropAt(e, dateIso)}>
               <div className="date-label">{isToday && <strong>TODAY</strong>}<button className={isToday ? "is-today" : ""} onClick={() => openNew(dateIso)} disabled={!canEdit} aria-label={canEdit ? `Add event on ${dateIso}` : dateIso}>{date.getDate()}</button></div>
               <div className="event-stack">
-                {dayEvents.map(item => {
+                {Array.from({ length: laneCount }, (_, lane) => {
+                  const item = laneEvents.get(lane);
+                  if (!item) return <div className="event-lane" aria-hidden="true" key={`empty-lane-${lane}`} />;
                   const starts = item.startSlot >= dayStart; const ends = item.endSlot <= dayEnd;
                   const left = Math.max(0, item.startSlot - dayStart) * 50;
                   const right = Math.max(0, dayEnd - item.endSlot) * 50;
