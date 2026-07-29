@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { assignEventLanes } from "./event-lanes";
 import { supabase } from "./supabase";
-import { todoSupabase } from "./todo-supabase";
+import { todoApi } from "./todo-api";
 
 type CalendarEvent = { id: number; title: string; startSlot: number; endSlot: number; color: number };
 type DragAction = { id: number; mode: "move" | "start" | "end"; duration: number };
@@ -78,18 +78,21 @@ export default function Home() {
     let active = true;
     let retryTimer: number | undefined;
     const loadTodos = async () => {
+      const listsPromise = todoApi<TodoList[]>("todo_lists?select=id%2Cshare_code%2Cname%2Cposition&order=position.asc")
+        .then(data => ({ data, error: null }))
+        .catch(error => ({ data: null, error: error as Error }));
       const [listsResult, linksResult] = await Promise.all([
-        todoSupabase.from("todo_lists").select("id,share_code,name,position").order("position"),
+        listsPromise,
         supabase.from("calendar_todo_links").select("id,todo_list_id,todo_share_code,start_slot,end_slot").order("start_slot"),
       ]);
       if (!active) return;
       if (listsResult.error || linksResult.error) {
         const source = listsResult.error ? "Todo database" : "Calendar todo links";
         setTodoError(`${source}: ${listsResult.error?.message || linksResult.error?.message || "Could not load todo lists."}`);
-        retryTimer = window.setTimeout(loadTodos, 3000);
+        retryTimer = window.setTimeout(loadTodos, 5000);
         return;
       }
-      setTodoLists((listsResult.data || []) as TodoList[]);
+      setTodoLists(listsResult.data || []);
       setTodoLinks(((linksResult.data || []) as TodoLinkRow[]).map(toTodoLink));
       setTodoError("");
     };
@@ -255,9 +258,10 @@ export default function Home() {
   const showTodoList = async (link: TodoLink) => {
     if (!canEdit) return;
     setOpenTodoLink(link); setTodoItems([]); setTodoLoading(true); setTodoError("");
-    const result = await todoSupabase.from("todo_items").select("id,list_id,title,is_completed,position").eq("list_id", link.todoListId).order("position");
-    if (result.error) setTodoError(result.error.message);
-    else setTodoItems((result.data || []) as TodoItem[]);
+    try {
+      const items = await todoApi<TodoItem[]>(`todo_items?select=id%2Clist_id%2Ctitle%2Cis_completed%2Cposition&list_id=eq.${encodeURIComponent(link.todoListId)}&order=position.asc`);
+      setTodoItems(items);
+    } catch (error) { setTodoError(`Todo database: ${error instanceof Error ? error.message : "Could not load tasks."}`); }
     setTodoLoading(false);
   };
 
@@ -265,11 +269,13 @@ export default function Home() {
     if (!canEdit) return;
     const nextValue = !item.is_completed;
     setTodoItems(current => current.map(todo => todo.id === item.id ? { ...todo, is_completed: nextValue } : todo));
-    const result = await todoSupabase.from("todo_items").update({ is_completed: nextValue }).eq("id", item.id);
-    if (result.error) {
+    try {
+      await todoApi<null>(`todo_items?id=eq.${encodeURIComponent(item.id)}`, { method: "PATCH", body: { is_completed: nextValue } });
+      setTodoError("");
+    } catch (error) {
       setTodoItems(current => current.map(todo => todo.id === item.id ? item : todo));
-      setTodoError(result.error.message);
-    } else setTodoError("");
+      setTodoError(`Todo database: ${error instanceof Error ? error.message : "Could not update task."}`);
+    }
   };
 
   const unlinkTodoList = async () => {
