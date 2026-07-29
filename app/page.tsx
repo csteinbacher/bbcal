@@ -3,11 +3,17 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { assignEventLanes } from "./event-lanes";
 import { supabase } from "./supabase";
+import { todoSupabase } from "./todo-supabase";
 
 type CalendarEvent = { id: number; title: string; startSlot: number; endSlot: number; color: number };
 type DragAction = { id: number; mode: "move" | "start" | "end"; duration: number };
 type CategoryRow = { id: number; name: string; color: string; sort_order: number };
 type EventRow = { id: number; title: string; start_slot: number; end_slot: number; category_id: number };
+type TodoList = { id: string; share_code: string; name: string; position: number };
+type TodoItem = { id: string; list_id: string; title: string; is_completed: boolean; position: number };
+type TodoLink = { id: number; todoListId: string; todoShareCode: string; startSlot: number; endSlot: number };
+type TodoLinkRow = { id: number; todo_list_id: string; todo_share_code: string; start_slot: number; end_slot: number };
+type TodoDraft = { todoListId: string; startDate: string; endDate: string };
 type ViewerRole = "chris" | "viewer";
 
 const DEFAULT_COLORS = ["#ff3b30", "#ff8500", "#ffc400", "#00a98f", "#00a6cf", "#2979ff", "#6847e8", "#a83bc1", "#ed3981"];
@@ -24,6 +30,7 @@ const today = new Date();
 const baseYear = today.getFullYear();
 const baseMonth = today.getMonth();
 const toEvent = (row: EventRow): CalendarEvent => ({ id: Number(row.id), title: row.title, startSlot: row.start_slot, endSlot: row.end_slot, color: row.category_id });
+const toTodoLink = (row: TodoLinkRow): TodoLink => ({ id: Number(row.id), todoListId: row.todo_list_id, todoShareCode: row.todo_share_code, startSlot: row.start_slot, endSlot: row.end_slot });
 
 export default function Home() {
   const [halfStep, setHalfStep] = useState(0);
@@ -41,6 +48,13 @@ export default function Home() {
   const [choosingChris, setChoosingChris] = useState(false);
   const [password, setPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
+  const [todoLists, setTodoLists] = useState<TodoList[]>([]);
+  const [todoLinks, setTodoLinks] = useState<TodoLink[]>([]);
+  const [todoDraft, setTodoDraft] = useState<TodoDraft | null>(null);
+  const [openTodoLink, setOpenTodoLink] = useState<TodoLink | null>(null);
+  const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
+  const [todoLoading, setTodoLoading] = useState(false);
+  const [todoError, setTodoError] = useState("");
   const wheelLock = useRef(0);
 
   const canEdit = role === "chris";
@@ -58,6 +72,27 @@ export default function Home() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (!canEdit) return;
+    let active = true;
+    const loadTodos = async () => {
+      const [listsResult, linksResult] = await Promise.all([
+        todoSupabase.from("todo_lists").select("id,share_code,name,position").order("position"),
+        supabase.from("calendar_todo_links").select("id,todo_list_id,todo_share_code,start_slot,end_slot").order("start_slot"),
+      ]);
+      if (!active) return;
+      if (listsResult.error || linksResult.error) {
+        setTodoError(listsResult.error?.message || linksResult.error?.message || "Could not load todo lists.");
+        return;
+      }
+      setTodoLists((listsResult.data || []) as TodoList[]);
+      setTodoLinks(((linksResult.data || []) as TodoLinkRow[]).map(toTodoLink));
+      setTodoError("");
+    };
+    loadTodos();
+    return () => { active = false; };
+  }, [canEdit]);
 
   useEffect(() => {
     let active = true;
@@ -189,6 +224,59 @@ export default function Home() {
     } else setSyncError("");
   };
 
+  const openTodoPicker = (date = iso(new Date(view.year, view.month, view.half ? 15 : 1))) => {
+    if (!canEdit) return;
+    setTodoError("");
+    setTodoDraft({ todoListId: todoLists[0]?.id || "", startDate: date, endDate: date });
+  };
+
+  const attachTodoList = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canEdit || !todoDraft?.todoListId) return;
+    const list = todoLists.find(item => item.id === todoDraft.todoListId);
+    if (!list) return;
+    const startSlot = slot(todoDraft.startDate);
+    const endSlot = slot(todoDraft.endDate, 2);
+    if (endSlot <= startSlot) { setTodoError("The end date must be on or after the start date."); return; }
+    const result = await supabase.from("calendar_todo_links").insert({
+      todo_list_id: list.id,
+      todo_share_code: list.share_code,
+      start_slot: startSlot,
+      end_slot: endSlot,
+    }).select("id,todo_list_id,todo_share_code,start_slot,end_slot").single();
+    if (result.error) { setTodoError(result.error.message); return; }
+    setTodoLinks(current => [...current, toTodoLink(result.data as TodoLinkRow)]);
+    setTodoDraft(null); setTodoError("");
+  };
+
+  const showTodoList = async (link: TodoLink) => {
+    if (!canEdit) return;
+    setOpenTodoLink(link); setTodoItems([]); setTodoLoading(true); setTodoError("");
+    const result = await todoSupabase.from("todo_items").select("id,list_id,title,is_completed,position").eq("list_id", link.todoListId).order("position");
+    if (result.error) setTodoError(result.error.message);
+    else setTodoItems((result.data || []) as TodoItem[]);
+    setTodoLoading(false);
+  };
+
+  const toggleTodoItem = async (item: TodoItem) => {
+    if (!canEdit) return;
+    const nextValue = !item.is_completed;
+    setTodoItems(current => current.map(todo => todo.id === item.id ? { ...todo, is_completed: nextValue } : todo));
+    const result = await todoSupabase.from("todo_items").update({ is_completed: nextValue }).eq("id", item.id);
+    if (result.error) {
+      setTodoItems(current => current.map(todo => todo.id === item.id ? item : todo));
+      setTodoError(result.error.message);
+    } else setTodoError("");
+  };
+
+  const unlinkTodoList = async () => {
+    if (!canEdit || !openTodoLink) return;
+    const result = await supabase.from("calendar_todo_links").delete().eq("id", openTodoLink.id);
+    if (result.error) { setTodoError(result.error.message); return; }
+    setTodoLinks(current => current.filter(link => link.id !== openTodoLink.id));
+    setOpenTodoLink(null); setTodoItems([]); setTodoError("");
+  };
+
   const chooseViewer = () => {
     window.localStorage.setItem("bbcal-role", "viewer");
     setRole("viewer");
@@ -202,6 +290,7 @@ export default function Home() {
   const forgetIdentity = () => {
     window.localStorage.removeItem("bbcal-role");
     setRole(null); setChoosingChris(false); setPassword(""); setPasswordError("");
+    setTodoLists([]); setTodoLinks([]); setTodoItems([]); setOpenTodoLink(null); setTodoDraft(null); setTodoError("");
   };
 
   return (
@@ -216,7 +305,7 @@ export default function Home() {
           </select>
           <button className="icon-button" onClick={() => shift(1)} aria-label="Next half month">›</button>
         </div>
-        <div className="actions"><button className="role-button" onClick={forgetIdentity} title="Change viewer">{canEdit ? "Chris" : "View only"}</button><span className={`sync-status ${syncError ? "sync-error" : ""}`} title={syncError || "Connected to Supabase"}>{loading ? "Loading…" : syncError ? "Sync error" : "● Saved"}</span><button className="today-button" onClick={jumpToday}>Today</button>{canEdit && <button className="add-button" onClick={() => openNew()}>＋ Add event</button>}</div>
+        <div className="actions"><button className="role-button" onClick={forgetIdentity} title="Change viewer">{canEdit ? "Chris" : "View only"}</button><span className={`sync-status ${syncError || todoError ? "sync-error" : ""}`} title={syncError || todoError || "Connected to Supabase"}>{loading ? "Loading…" : syncError || todoError ? "Sync error" : "● Saved"}</span><button className="today-button" onClick={jumpToday}>Today</button>{canEdit && <button className="todo-button" onClick={() => openTodoPicker()}>＋ Todo list</button>}{canEdit && <button className="add-button" onClick={() => openNew()}>＋ Add event</button>}</div>
       </header>
 
       <section className="calendar" aria-label={`${view.title} calendar`}>
@@ -230,6 +319,7 @@ export default function Home() {
               .sort((a, b) => (eventLanes.get(a.id) ?? 0) - (eventLanes.get(b.id) ?? 0));
             const laneEvents = new Map(dayEvents.map(item => [eventLanes.get(item.id) ?? 0, item]));
             const laneCount = dayEvents.length ? Math.max(...laneEvents.keys()) + 1 : 0;
+            const dayTodoLinks = canEdit ? todoLinks.filter(link => link.startSlot < dayEnd && link.endSlot > dayStart) : [];
             const isToday = dateIso === iso(today);
             return <div className="day" data-date={dateIso} key={dateIso} onDoubleClick={e => { if (canEdit && e.target === e.currentTarget) openNew(dateIso); }} onDragOver={e => { if (canEdit) e.preventDefault(); }} onDrop={e => dropAt(e, dateIso)}>
               <div className="date-label">{isToday && <strong>TODAY</strong>}<button className={isToday ? "is-today" : ""} onClick={() => openNew(dateIso)} disabled={!canEdit} aria-label={canEdit ? `Add event on ${dateIso}` : dateIso}>{date.getDate()}</button></div>
@@ -247,6 +337,17 @@ export default function Home() {
                   </div></div>;
                 })}
               </div>
+              {dayTodoLinks.length > 0 && <div className="todo-link-stack">
+                {dayTodoLinks.map(link => {
+                  const list = todoLists.find(item => item.id === link.todoListId);
+                  const starts = link.startSlot >= dayStart; const ends = link.endSlot <= dayEnd;
+                  const left = Math.max(0, link.startSlot - dayStart) * 50;
+                  const right = Math.max(0, dayEnd - link.endSlot) * 50;
+                  return <div className="todo-link-lane" key={link.id}><button type="button" className={`todo-link ${starts ? "todo-link-start" : ""} ${ends ? "todo-link-end" : ""}`} style={{ left: `${left}%`, right: `${right}%` }} onClick={() => showTodoList(link)} title={`Open ${list?.name || "todo list"}`}>
+                    {starts ? <><span aria-hidden="true">✓</span>{list?.name || "Todo list"}</> : null}
+                  </button></div>;
+                })}
+              </div>}
             </div>;
           })}
         </div>
@@ -269,6 +370,25 @@ export default function Home() {
           <fieldset><legend>Category</legend><div className="color-grid">{colors.map((color, i) => <button type="button" key={i} className={`color-dot ${editing.color === i ? "selected" : ""}`} style={{ background: color }} onClick={() => setEditing({ ...editing, color: i })} aria-label={colorNames[i]} title={colorNames[i]} />)}</div></fieldset>
           <div className="modal-actions">{events.some(item => item.id === editing.id) && <button type="button" className="delete" onClick={remove}>Delete</button>}<span /><button type="button" className="cancel" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="save">Save event</button></div>
         </form>
+      </div>}
+
+      {canEdit && todoDraft && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setTodoDraft(null)} onWheel={e => e.stopPropagation()}>
+        <form className="modal todo-picker-modal" onSubmit={attachTodoList}>
+          <div className="modal-heading"><div><p>PRIVATE · CHRIS ONLY</p><h2>Attach a todo list</h2></div><button type="button" className="close" onClick={() => setTodoDraft(null)} aria-label="Close">×</button></div>
+          <label>Todo list<select required autoFocus value={todoDraft.todoListId} onChange={e => setTodoDraft({ ...todoDraft, todoListId: e.target.value })}><option value="" disabled>{todoLists.length ? "Choose a list" : "No todo lists available"}</option>{todoLists.map(list => <option value={list.id} key={list.id}>{list.name}</option>)}</select></label>
+          <div className="date-fields"><label>Starts<input type="date" required value={todoDraft.startDate} onChange={e => setTodoDraft({ ...todoDraft, startDate: e.target.value, endDate: e.target.value > todoDraft.endDate ? e.target.value : todoDraft.endDate })} /></label><label>Ends<input type="date" required min={todoDraft.startDate} value={todoDraft.endDate} onChange={e => setTodoDraft({ ...todoDraft, endDate: e.target.value })} /></label></div>
+          {todoError && <p className="todo-error" role="alert">{todoError}</p>}
+          <div className="modal-actions"><span /><button type="button" className="cancel" onClick={() => setTodoDraft(null)}>Cancel</button><button type="submit" className="save" disabled={!todoDraft.todoListId}>Attach list</button></div>
+        </form>
+      </div>}
+
+      {canEdit && openTodoLink && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setOpenTodoLink(null)} onWheel={e => e.stopPropagation()}>
+        <section className="modal todo-list-modal" role="dialog" aria-modal="true" aria-labelledby="todo-list-title">
+          <div className="modal-heading"><div><p>PRIVATE · CHRIS ONLY</p><h2 id="todo-list-title">{todoLists.find(list => list.id === openTodoLink.todoListId)?.name || "Todo list"}</h2></div><button type="button" className="close" onClick={() => setOpenTodoLink(null)} aria-label="Close">×</button></div>
+          {todoLoading ? <p className="todo-state">Loading tasks…</p> : todoItems.length ? <ul className="todo-modal-items">{todoItems.map(item => <li className={item.is_completed ? "completed" : ""} key={item.id}><label><input type="checkbox" checked={item.is_completed} onChange={() => toggleTodoItem(item)} /><span>{item.title}</span></label></li>)}</ul> : <p className="todo-state">This list has no tasks yet.</p>}
+          {todoError && <p className="todo-error" role="alert">{todoError}</p>}
+          <div className="modal-actions todo-modal-actions"><button type="button" className="delete" onClick={unlinkTodoList}>Remove from calendar</button><span /><button type="button" className="save" onClick={() => setOpenTodoLink(null)}>Done</button></div>
+        </section>
       </div>}
 
       {identityChecked && !role && <div className="modal-backdrop identity-backdrop" onWheel={e => e.stopPropagation()}>

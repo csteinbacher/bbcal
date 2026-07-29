@@ -7,4 +7,5 @@ test("exports BBCal as a static page", async () => {
   assert.match(html, /<title>BBCal/);
   assert.match(html, /BBCal/);
   assert.match(html, /_next\/static/);
+  assert.doesNotMatch(html, /Attach a todo list|PRIVATE · CHRIS ONLY/);
 });

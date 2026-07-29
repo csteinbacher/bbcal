@@ -14,6 +14,16 @@ npm run dev
 
 Open the local address printed by Next.js.
 
+## Todo-list integration
+
+BBCal can attach lists from BBTodo to calendar date ranges. The integration is
+available only in the Chris view; viewer mode neither loads nor renders todo
+lists.
+
+Before deploying this feature, run `db/calendar-todo-links.sql` once in the
+BBCal Supabase project's SQL editor. Todo lists and tasks remain stored in the
+BBTodo Supabase project.
+
 ## Production build
 
 ```bash
