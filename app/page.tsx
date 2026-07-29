@@ -375,7 +375,7 @@ export default function Home() {
 
       {editing && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && closeCreation()} onWheel={e => e.stopPropagation()}>
         <form className="modal creation-modal" onSubmit={creatingTodo ? attachTodoList : save}>
-          <div className="modal-heading"><div><p>{creatingTodo ? "PRIVATE · CHRIS ONLY" : "EVENT DETAILS"}</p><h2>{editingExistingEvent ? "Edit event" : creatingTodo ? "Attach a todo list" : "New event"}</h2></div><button type="button" className="close" onClick={closeCreation} aria-label="Close">×</button></div>
+          <div className="modal-heading"><div>{!creatingTodo && <p>EVENT DETAILS</p>}<h2>{editingExistingEvent ? "Edit event" : creatingTodo ? "Attach a todo list" : "New event"}</h2></div><button type="button" className="close" onClick={closeCreation} aria-label="Close">×</button></div>
           {!editingExistingEvent && <div className="creation-mode" role="group" aria-label="What would you like to add?">
             <button type="button" className={creationMode === "event" ? "selected" : ""} onClick={() => setCreationMode("event")}><span aria-hidden="true">●</span> Event</button>
             <button type="button" className={creationMode === "todo" ? "selected" : ""} onClick={() => setCreationMode("todo")}><span aria-hidden="true">✓</span> Todo list</button>
@@ -383,7 +383,6 @@ export default function Home() {
           {creatingTodo && todoDraft ? <>
             <label>Todo list<select required autoFocus value={todoDraft.todoListId} onChange={e => setTodoDraft({ ...todoDraft, todoListId: e.target.value })}><option value="" disabled>{todoLists.length ? "Choose a list" : "No todo lists available"}</option>{todoLists.map(list => <option value={list.id} key={list.id}>{list.name}</option>)}</select></label>
             <div className="date-fields"><label>Starts<input type="date" required value={todoDraft.startDate} onChange={e => setTodoDraft({ ...todoDraft, startDate: e.target.value, endDate: e.target.value > todoDraft.endDate ? e.target.value : todoDraft.endDate })} /></label><label>Ends<input type="date" required min={todoDraft.startDate} value={todoDraft.endDate} onChange={e => setTodoDraft({ ...todoDraft, endDate: e.target.value })} /></label></div>
-            <p className="private-note">This list will only appear in your Chris view.</p>
             {todoError && <p className="todo-error" role="alert">{todoError}</p>}
           </> : <>
             <label>Event name<input autoFocus required value={editing.title} onChange={e => setEditing({ ...editing, title: e.target.value })} placeholder="e.g. Build wall" /></label>
@@ -396,7 +395,7 @@ export default function Home() {
 
       {canEdit && openTodoLink && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setOpenTodoLink(null)} onWheel={e => e.stopPropagation()}>
         <section className="modal todo-list-modal" role="dialog" aria-modal="true" aria-labelledby="todo-list-title">
-          <div className="modal-heading"><div><p>PRIVATE · CHRIS ONLY</p><h2 id="todo-list-title">{todoLists.find(list => list.id === openTodoLink.todoListId)?.name || "Todo list"}</h2></div><button type="button" className="close" onClick={() => setOpenTodoLink(null)} aria-label="Close">×</button></div>
+          <div className="modal-heading"><div><h2 id="todo-list-title">{todoLists.find(list => list.id === openTodoLink.todoListId)?.name || "Todo list"}</h2></div><button type="button" className="close" onClick={() => setOpenTodoLink(null)} aria-label="Close">×</button></div>
           {todoLoading ? <p className="todo-state">Loading tasks…</p> : todoItems.length ? <ul className="todo-modal-items">{todoItems.map(item => <li className={item.is_completed ? "completed" : ""} key={item.id}><label><input type="checkbox" checked={item.is_completed} onChange={() => toggleTodoItem(item)} /><span>{item.title}</span></label></li>)}</ul> : <p className="todo-state">This list has no tasks yet.</p>}
           {todoError && <p className="todo-error" role="alert">{todoError}</p>}
           <div className="modal-actions todo-modal-actions"><button type="button" className="delete" onClick={unlinkTodoList}>Remove from calendar</button><span /><button type="button" className="save" onClick={() => setOpenTodoLink(null)}>Done</button></div>
