@@ -390,10 +390,10 @@ export default function Home() {
             <div className="expanded-day-list">
               {expandedEvents.map(item => <div className="expanded-day-event" key={item.id}>
                 <i style={{ background: colors[item.color] || DEFAULT_COLORS[5] }} />
-                <div><strong>{item.title}</strong><span>{colorNames[item.color] || "Event"}</span></div>
+                <strong>{item.title}</strong>
               </div>)}
               {expandedTodos.map(link => <div className="expanded-day-event expanded-day-todo" key={`todo-${link.id}`}>
-                <i /><div><strong>{todoLists.find(list => list.id === link.todoListId)?.name || "Todo list"}</strong><span>Attached todo list</span></div>
+                <i /><strong>{todoLists.find(list => list.id === link.todoListId)?.name || "Todo list"}</strong>
               </div>)}
               {!expandedEvents.length && !expandedTodos.length && <p className="expanded-day-empty">Nothing scheduled for this day.</p>}
             </div>
