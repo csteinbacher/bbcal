@@ -57,6 +57,7 @@ export default function Home() {
   const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
   const [todoLoading, setTodoLoading] = useState(false);
   const [todoError, setTodoError] = useState("");
+  const [expandedDay, setExpandedDay] = useState<string | null>(null);
   const wheelLock = useRef(0);
 
   const canEdit = role === "chris";
@@ -74,6 +75,15 @@ export default function Home() {
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
+
+  useEffect(() => {
+    if (!expandedDay) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExpandedDay(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [expandedDay]);
 
   useEffect(() => {
     if (!canEdit) return;
@@ -333,6 +343,7 @@ export default function Home() {
             const dayTodoLinks = canEdit ? todoLinks.filter(link => link.startSlot < dayEnd && link.endSlot > dayStart) : [];
             const isToday = dateIso === iso(today);
             return <div className="day" data-date={dateIso} key={dateIso} onDoubleClick={e => { if (canEdit && e.target === e.currentTarget) openNew(dateIso); }} onDragOver={e => { if (canEdit) e.preventDefault(); }} onDrop={e => dropAt(e, dateIso)}>
+              <button type="button" className="day-expand-button" onClick={() => setExpandedDay(dateIso)} aria-label={`Show all events for ${date.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}`} title="Expand day"><span aria-hidden="true" /></button>
               <div className="date-label">{isToday && <strong>TODAY</strong>}<button className={isToday ? "is-today" : ""} onClick={() => openNew(dateIso)} disabled={!canEdit} aria-label={canEdit ? `Add event on ${dateIso}` : dateIso}>{date.getDate()}</button></div>
               <div className="event-stack">
                 {Array.from({ length: laneCount }, (_, lane) => {
@@ -363,6 +374,33 @@ export default function Home() {
           })}
         </div>
       </section>
+
+      {expandedDay && (() => {
+        const expandedStart = slot(expandedDay);
+        const expandedEnd = expandedStart + 2;
+        const expandedEvents = visibleEvents
+          .filter(item => item.startSlot < expandedEnd && item.endSlot > expandedStart)
+          .sort((a, b) => a.startSlot - b.startSlot || a.endSlot - b.endSlot || a.title.localeCompare(b.title));
+        const expandedTodos = canEdit ? todoLinks.filter(link => link.startSlot < expandedEnd && link.endSlot > expandedStart) : [];
+        const [year, month, day] = expandedDay.split("-").map(Number);
+        const heading = new Date(year, month - 1, day).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+        return <div className="modal-backdrop" onMouseDown={event => event.target === event.currentTarget && setExpandedDay(null)} onWheel={event => event.stopPropagation()}>
+          <section className="modal day-expanded-modal" role="dialog" aria-modal="true" aria-labelledby="expanded-day-title">
+            <div className="modal-heading"><div><p>DAY AT A GLANCE</p><h2 id="expanded-day-title">{heading}</h2></div><button type="button" className="close" onClick={() => setExpandedDay(null)} aria-label="Close">×</button></div>
+            <div className="expanded-day-list">
+              {expandedEvents.map(item => <div className="expanded-day-event" key={item.id}>
+                <i style={{ background: colors[item.color] || DEFAULT_COLORS[5] }} />
+                <div><strong>{item.title}</strong><span>{colorNames[item.color] || "Event"}</span></div>
+              </div>)}
+              {expandedTodos.map(link => <div className="expanded-day-event expanded-day-todo" key={`todo-${link.id}`}>
+                <i /><div><strong>{todoLists.find(list => list.id === link.todoListId)?.name || "Todo list"}</strong><span>Attached todo list</span></div>
+              </div>)}
+              {!expandedEvents.length && !expandedTodos.length && <p className="expanded-day-empty">Nothing scheduled for this day.</p>}
+            </div>
+            <div className="modal-actions expanded-day-actions"><span /><button type="button" className="save" onClick={() => setExpandedDay(null)}>Done</button></div>
+          </section>
+        </div>;
+      })()}
 
       <footer className="category-footer" onWheel={e => e.stopPropagation()}>
         <div className="legend">{colors.map((color, i) => <label className={!canEdit && !publicCategories[i] ? "private-category" : ""} key={i} title={canEdit ? "Click to rename" : colorNames[i]}><i style={{ background: color }} /><input value={colorNames[i]} readOnly={!canEdit} onChange={e => renameColor(i, e.target.value)} onBlur={() => persistColorName(i)} onKeyDown={e => { if (e.key === "Enter") e.currentTarget.blur(); }} aria-label={`${canEdit ? "Rename" : "Category"} ${colorNames[i]}`} /></label>)}</div>
