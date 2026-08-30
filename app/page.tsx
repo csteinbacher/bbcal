@@ -57,8 +57,10 @@ export default function Home() {
   const [todoItems, setTodoItems] = useState<TodoItem[]>([]);
   const [todoLoading, setTodoLoading] = useState(false);
   const [todoError, setTodoError] = useState("");
+  const [draggedTodoId, setDraggedTodoId] = useState<string | null>(null);
   const [expandedDay, setExpandedDay] = useState<string | null>(null);
   const wheelLock = useRef(0);
+  const todoOrderBeforeDrag = useRef<TodoItem[]>([]);
 
   const canEdit = role === "chris";
   const visibleEvents = useMemo(
@@ -286,6 +288,47 @@ export default function Home() {
     }
   };
 
+  const persistTodoOrder = async (orderedItems: TodoItem[], previousItems: TodoItem[]) => {
+    const positionedItems = orderedItems.map((item, index) => ({ ...item, position: index + 1 }));
+    setTodoItems(positionedItems);
+    try {
+      await Promise.all(positionedItems.map(item => todoApi<null>(`todo_items?id=eq.${encodeURIComponent(item.id)}`, {
+        method: "PATCH",
+        body: { position: item.position },
+      })));
+      setTodoError("");
+    } catch (error) {
+      setTodoItems(previousItems);
+      setTodoError(`Todo database: ${error instanceof Error ? error.message : "Could not save task order."}`);
+    }
+  };
+
+  const moveTodoItem = (draggedId: string, targetId: string, placeAfter: boolean) => {
+    if (draggedId === targetId) return;
+    setTodoItems(current => {
+      const from = current.findIndex(item => item.id === draggedId);
+      if (from < 0 || !current.some(item => item.id === targetId)) return current;
+      const next = [...current];
+      const [moved] = next.splice(from, 1);
+      const targetIndex = next.findIndex(item => item.id === targetId);
+      const insertAt = targetIndex + (placeAfter ? 1 : 0);
+      if (insertAt === from) return current;
+      next.splice(insertAt, 0, moved);
+      return next;
+    });
+  };
+
+  const moveTodoByKeyboard = (itemId: string, direction: -1 | 1) => {
+    const from = todoItems.findIndex(item => item.id === itemId);
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= todoItems.length) return;
+    const previous = [...todoItems];
+    const next = [...todoItems];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    void persistTodoOrder(next, previous);
+  };
+
   const unlinkTodoList = async () => {
     if (!canEdit || !openTodoLink) return;
     const result = await supabase.from("calendar_todo_links").delete().eq("id", openTodoLink.id);
@@ -434,7 +477,21 @@ export default function Home() {
       {canEdit && openTodoLink && <div className="modal-backdrop" onMouseDown={e => e.target === e.currentTarget && setOpenTodoLink(null)} onWheel={e => e.stopPropagation()}>
         <section className="modal todo-list-modal" role="dialog" aria-modal="true" aria-labelledby="todo-list-title">
           <div className="modal-heading"><div><h2 id="todo-list-title">{todoLists.find(list => list.id === openTodoLink.todoListId)?.name || "Todo list"}</h2></div><button type="button" className="close" onClick={() => setOpenTodoLink(null)} aria-label="Close">×</button></div>
-          {todoLoading ? <p className="todo-state">Loading tasks…</p> : todoItems.length ? <ul className="todo-modal-items">{todoItems.map(item => <li className={item.is_completed ? "completed" : ""} key={item.id}><label><input type="checkbox" checked={item.is_completed} onChange={() => toggleTodoItem(item)} /><span>{item.title}</span></label></li>)}</ul> : <p className="todo-state">This list has no tasks yet.</p>}
+          {todoLoading ? <p className="todo-state">Loading tasks…</p> : todoItems.length ? <ul className="todo-modal-items">{todoItems.map(item => <li
+            className={`${item.is_completed ? "completed" : ""} ${draggedTodoId === item.id ? "is-dragging" : ""}`}
+            key={item.id}
+            onDragOver={event => { event.preventDefault(); if (draggedTodoId) { const bounds = event.currentTarget.getBoundingClientRect(); moveTodoItem(draggedTodoId, item.id, event.clientY >= bounds.top + bounds.height / 2); } }}
+            onDrop={event => { event.preventDefault(); if (!draggedTodoId) return; const previous = todoOrderBeforeDrag.current; setDraggedTodoId(null); void persistTodoOrder(todoItems, previous); }}
+          ><button
+            type="button"
+            className="todo-drag-handle"
+            draggable
+            aria-label={`Reorder ${item.title}. Use drag and drop or the up and down arrow keys.`}
+            title="Drag to reorder"
+            onDragStart={event => { todoOrderBeforeDrag.current = [...todoItems]; setDraggedTodoId(item.id); event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", item.id); }}
+            onDragEnd={() => setDraggedTodoId(null)}
+            onKeyDown={event => { if (event.key === "ArrowUp" || event.key === "ArrowDown") { event.preventDefault(); moveTodoByKeyboard(item.id, event.key === "ArrowUp" ? -1 : 1); } }}
+          ><span aria-hidden="true">⠿</span></button><label><input type="checkbox" checked={item.is_completed} onChange={() => toggleTodoItem(item)} /><span>{item.title}</span></label></li>)}</ul> : <p className="todo-state">This list has no tasks yet.</p>}
           {todoError && <p className="todo-error" role="alert">{todoError}</p>}
           <div className="modal-actions todo-modal-actions"><button type="button" className="delete" onClick={unlinkTodoList}>Remove from calendar</button><span /><button type="button" className="save" onClick={() => setOpenTodoLink(null)}>Done</button></div>
         </section>
